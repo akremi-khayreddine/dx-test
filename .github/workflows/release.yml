@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  setup:
+    name: Setup
+    if: github.event.pull_request.merged == true   
+    runs-on: ubuntu-latest
+    steps:
+      - name: Webhook Action
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-webhook@master
+          job_name: Setup
+          job_status: ${{ job.status }}
+          next_job: CI
+          run_id: ${{ github.run_id }}
+          pipeline_id: ${{ github.event.repository.name }}
+
+  ci:
+    name: CI
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Load config (env)
+        id: env
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-config@master
+          path: config.json
+
+      - name: Use Node.js ${{ steps.env.outputs.NODE_VERSION }}
+        uses: actions/setup-node@v1
+        with:
+          node-version: ${{ steps.env.outputs.NODE_VERSION }}
+          registry-url: ${{ steps.env.outputs.GITHUB_REGISTRY_URL }}
+          scope: '@${{ steps.env.outputs.REPO_OWNER }}'
+
+      - name: NPM Install
+        run: npm ci
+        env:
+          CI: true
+
+      - name: Build App
+        run: npm run build-app --if-present
+
+      - name: Build and Publish Lib
+        if: steps.env.outputs.PROJECT_TYPE == 'lib'
+        run: |
+          npm run build-lib --if-present
+          cd ${{ steps.env.outputs.LIB_DIST }} && npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Artifact ${{ steps.env.outputs.VERSION }}
+        uses: actions/upload-artifact@v1
+        with:
+          name: ${{ steps.env.outputs.VERSION }}
+          path: ${{ steps.env.outputs.APP_DIST }}
+
+      - name: Webhook Action
+        if: always()
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-webhook@master
+          job_name: CI
+          job_status: ${{ job.status }}
+          next_job: Release
+          run_id: ${{ github.run_id }}
+          pipeline_id: ${{ steps.env.outputs.REPO_NAME }}
+          job_payload: '{ "version": "${{ steps.env.outputs.VERSION }}" }'
+
+  release:
+    name: Release
+    needs: [ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.base_ref }}
+          fetch-depth: 0
+
+      - name: Load config (env)
+        id: env
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-config@master
+          path: config.json
+
+      - name: Create Release
+        id: release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.env.outputs.VERSION }}
+          release_name: Release ${{ steps.env.outputs.VERSION }}
+          draft: false
+          prerelease: false
+
+      - name: Undo Git Merge
+        if: failure()
+        run: |
+          git config --local user.email "distinctlab@gmail.com"
+          git config --local user.name "distinctlab"
+          #git reset --hard HEAD@{1}
+          git revert ${{ github.event.pull_request.merge_commit_sha }} # $GITHUB_SHA
+          git push ${REPO} HEAD:${{ github.base_ref }} #--force
+        env:
+          REPO: 'https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git'
+
+      - name: Download Artifact ${{ steps.env.outputs.VERSION }}
+        uses: actions/download-artifact@v1
+        with:
+          name: ${{ steps.env.outputs.VERSION }}
+          path: ${{ steps.env.outputs.APP_DIST }}
+
+      - name: Package Release Asset
+        run: tar zcvf ./${{ steps.env.outputs.ARTIFACT_NAME }} ${{ steps.env.outputs.APP_DIST }}
+
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.release.outputs.upload_url }}
+          asset_path: ./${{ steps.env.outputs.ARTIFACT_NAME }}
+          asset_name: ${{ steps.env.outputs.ARTIFACT_NAME }}
+          asset_content_type: application/gzip
+
+      - name: Webhook Action
+        if: always()
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-webhook@master
+          job_name: Release
+          job_status: ${{ job.status }}
+          run_id: ${{ github.run_id }}
+          pipeline_id: ${{ steps.env.outputs.REPO_NAME }}
+          job_payload: '{ "version": "${{ steps.env.outputs.VERSION }}", "app_url":"${{ steps.env.outputs.APP_URL }}", "artifact_name":"${{ steps.env.outputs.ARTIFACT_NAME }}", "artifact_url": "${{ steps.env.outputs.ARTIFACT_URL }}" }'
