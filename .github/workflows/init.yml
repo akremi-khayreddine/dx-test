@@ -1,0 +1,64 @@
+name: Init
+
+on:
+  repository_dispatch:
+    types: [init]
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install angular
+        run: |
+          sudo npm -g install @angular/cli
+          sudo npm install -g add-project-script
+
+      - name: Create Angular project
+        run: |
+          cd ..
+          ng new ${{ github.event.repository.name }} --createApplication=false
+          cd ${{ github.event.repository.name }}
+
+      - name: Generate application
+        run: ng g application ${{ github.event.repository.name }} --routing=true --style=scss
+
+      - name: Create app-config.json
+        run: |
+          cd projects/${{ github.event.repository.name }}/src/assets
+          touch app-config.json
+
+      - name: Generate library
+        if: github.event.client_payload.project_type == 'lib'
+        run: ng g library ${{ github.event.repository.name }}-lib
+
+      - name: Update package.json
+        if: github.event.client_payload.project_type == 'lib'
+        run: |
+          cd projects/${{ github.event.repository.name }}-lib
+          echo $(cat package.json | jq --arg version 0.0.0 '. + { version: $version }') > package.json
+          echo $(cat package.json | jq --arg name @${{ github.repository }} '. + { name: $name }') > package.json
+          echo $(cat package.json | jq '. + { repository: { "url": "https://github.com/${{ github.repository }}.git" } }') > package.json
+          echo $(cat package.json | jq '. + { "publishConfig": { "registry": "https://npm.pkg.github.com/" } }') > package.json
+
+      - name: Add app build scripts to package.json
+        run: |
+          add-project-script -n "build-app" -v "ng build --prod ${{ github.event.repository.name }}"
+
+      - name: Add lib build scripts to package.json
+        if: github.event.client_payload.project_type == 'lib'
+        run: |
+          add-project-script -n "build-lib" -v "ng build --prod ${{ github.event.repository.name }}-lib"
+          add-project-script -n "publish-lib" -v "cd dist/${{ github.event.repository.name }}-lib && npm publish"
+
+      - name: Commit changes
+        env:
+          REPO: 'https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git'
+        run: |
+          git config --local user.email "distinctlab@gmail.com"
+          git config --local user.name "distinctlab"
+          git add . 
+          git commit -m "First commit"
+          git push ${REPO} HEAD:master --force
