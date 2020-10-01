@@ -1,0 +1,15 @@
+{
+  "hosting": [
+    {
+      "target": "${{ FIREBASE_TARGET }}",
+      "public": "${{ APP_DIST }}",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    }
+  ]
+}
