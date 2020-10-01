@@ -1,0 +1,14 @@
+{
+    "projects": {
+        "default": "${{ FIREBASE_PROJECT }}"
+    },
+    "targets": {
+        "${{ FIREBASE_PROJECT }}": {
+            "hosting": {
+                "${{ FIREBASE_TARGET }}": [
+                    "${{ FIREBASE_HOSTING }}"
+                ]
+            }
+        }
+    }
+}
