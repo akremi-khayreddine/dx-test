@@ -1,0 +1,279 @@
+name: Preview
+
+on: pull_request
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    steps:
+      # - name: Webhook Action
+      #   uses: distinctlab/dx-actions-loader@master
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+      #   with:
+      #     private_action: distinctlab/dx-actions-webhook@master
+      #     job_name: Setup
+      #     job_status: ${{ job.status }}
+      #     next_job: SemVersion
+      #     run_id: ${{ github.run_id }}
+      #     pipeline_id: ${{ github.event.repository.name }}
+
+      # checkout the private repo containing the action to run
+      - name: Checkout Webhook Action Repo
+        uses: actions/checkout@v2
+        with:
+          repository: distinctlab/dx-actions-webhook
+          token: ${{ secrets.ACCESS_TOKEN }} # stored in GitHub secrets
+      - name: Run Webhook Action
+        uses: ./
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          job_name: Setup
+          job_status: ${{ job.status }}
+          next_job: SemVersion
+          run_id: ${{ github.run_id }}
+          pipeline_id: ${{ github.event.repository.name }}
+
+  semversion:
+    name: SemVersion
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Load config (env)
+        id: env
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-config@master
+          path: config.json
+
+      - name: Fetch Tags
+        run: git fetch ${REMOTE} 'refs/tags/*:refs/tags/*'
+        env:
+          REMOTE: "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+
+      - name: PR Labeler
+        uses: technote-space/pr-labeler-action@v3
+        with:
+          configuration-path: .github/pr-labeler.yml # optional, .github/pr-labeler.yml is the default value
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: PR Matcher Label
+        id: label
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-label-matcher@master
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          allowed: premajor, major, preminor, minor, prepatch, patch, prerelease
+
+      - name: Bump Version
+        id: bump
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-semver@master
+          bump: ${{ steps.label.outputs.match }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: true
+
+      - name: Set Version Vars
+        id: version
+        run: |
+          echo ::set-output name=LAST_VERSION::$(echo $(git describe --tags `git rev-list --tags --max-count=1`) | tr -d 'v')
+          echo ::set-output name=NEW_VERSION::${{ steps.bump.outputs.version }}
+          echo ::set-output name=PACKAGE_VERSION::$(cat package.json | jq -r .version)
+
+      - name: Update Config Version
+        run: |
+          echo $(cat config.json | jq --arg version v${{ steps.version.outputs.NEW_VERSION }} '. + { VERSION: $version }') > config.json
+          echo $(cat ${{ steps.env.outputs.APP_CONFIG_PATH }} | jq --arg version v${{ steps.version.outputs.NEW_VERSION }} '. + { version: $version }') > ${{ steps.env.outputs.APP_CONFIG_PATH }}
+
+      - name: Update App Version
+        if: steps.version.outputs.PACKAGE_VERSION != steps.version.outputs.NEW_VERSION
+        run: |
+          echo $(cat config.json | jq --arg version v${{ steps.version.outputs.NEW_VERSION }} '. + { VERSION: $version }') > config.json
+          npm --no-git-tag-version version ${{ steps.version.outputs.NEW_VERSION }}
+
+      - name: Update lib Version
+        if: steps.env.outputs.PROJECT_TYPE == 'lib' && steps.version.outputs.PACKAGE_VERSION != steps.version.outputs.NEW_VERSION
+        run: |
+          cd projects/${{ steps.env.outputs.LIB_NAME }} 
+          npm --no-git-tag-version version ${{ steps.version.outputs.NEW_VERSION }}
+
+      - name: Push New Version
+        id: commit
+        if: steps.version.outputs.PACKAGE_VERSION != steps.version.outputs.NEW_VERSION
+        run: |
+          git config --local user.email "distinctlab@gmail.com"
+          git config --local user.name "distinctlab"
+          cd $GITHUB_WORKSPACE && git add . 
+          git commit -m "Update version ${{ steps.version.outputs.LAST_VERSION }} -> ${{ steps.version.outputs.NEW_VERSION }}"
+          git push ${REPO} HEAD:${{ github.head_ref }} --force
+        env:
+          REPO: "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+
+      - name: Webhook Action
+        if: always()
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          private_action: distinctlab/dx-actions-webhook@master
+          job_name: SemVersion
+          job_status: ${{ job.status }}
+          next_job: CI
+          run_id: ${{ github.run_id }}
+          pipeline_id: ${{ steps.env.outputs.REPO_NAME }}
+          job_payload: '{ "version": "v${{ steps.version.outputs.NEW_VERSION }}", "version_label": "${{ steps.label.outputs.match }}" }'
+
+  ci:
+    name: CI
+    needs: [semversion]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Load config (env)
+        id: env
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-config@master
+          path: config.json
+
+      - name: Use Node.js ${{ steps.env.outputs.NODE_VERSION }}
+        uses: actions/setup-node@v1
+        with:
+          node-version: ${{ steps.env.outputs.NODE_VERSION }}
+          registry-url: ${{ steps.env.outputs.GITHUB_REGISTRY_URL }}
+          scope: "@${{ steps.env.outputs.REPO_OWNER }}"
+
+      - name: Cache node modules
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: "**/node_modules"
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+
+      - name: NPM Install
+        run: npm install
+        env:
+          CI: true
+
+      - name: Build App
+        run: npm run build-app --if-present
+
+      - name: Build Lib
+        if: steps.env.outputs.PROJECT_TYPE == 'lib'
+        run: npm run build-lib --if-present
+
+      - name: Upload Artifact ${{ steps.env.outputs.VERSION }}
+        uses: actions/upload-artifact@v1
+        with:
+          name: ${{ steps.env.outputs.VERSION }}
+          path: ${{ steps.env.outputs.APP_DIST }}
+
+      - name: Webhook Action
+        if: always()
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          private_action: distinctlab/dx-actions-webhook@master
+          job_name: "CI"
+          job_status: ${{ job.status }}
+          next_job: "Deploy"
+          run_id: ${{ github.run_id }}
+          pipeline_id: ${{ steps.env.outputs.REPO_NAME }}
+          job_payload: '{ "version": "${{ steps.env.outputs.VERSION }}" }'
+
+  deploy:
+    name: Deploy
+    needs: [ci]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ github.head_ref }}
+
+      # - name: Get Package New Version
+      #   id: version
+      #   run: echo ::set-output name=NEW_VERSION::v$(cat package.json | jq -r .version)
+      - name: Load config (env)
+        id: env
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-config@master
+          path: config.json
+          #version: ${{ steps.version.outputs.NEW_VERSION }}
+
+      - name: Download Artifact ${{ steps.env.outputs.VERSION }}
+        uses: actions/download-artifact@v1
+        with:
+          name: ${{ steps.env.outputs.VERSION }}
+          path: ${{ steps.env.outputs.APP_DIST }}
+
+      - name: Deploy Firebase App
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-firebase@master
+          version: ${{ steps.env.outputs.VERSION }}-pr-${{ github.event.pull_request.number }}
+          app_dist: ${{ steps.env.outputs.APP_DIST }}
+          firebase_project: ${{ steps.env.outputs.FIREBASE_PROJECT }}
+          firebase_target: ${{ steps.env.outputs.FIREBASE_TARGET }}
+          firebase_hosting: ${{ steps.env.outputs.FIREBASE_HOSTING }}
+          firebase_predeploy: ${{ steps.env.outputs.FIREBASE_PREDEPLOY }}
+          firebase_postdeploy: ${{ steps.env.outputs.FIREBASE_POSTDEPLOY }}
+
+      - name: Update PR ${{ github.event.pull_request.number }}
+        uses: tzkhan/pr-update-action@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          branch-regex: "${{ github.head_ref }}"
+          body-template: "[Preview ${{ steps.env.outputs.VERSION }}](${{ steps.env.outputs.APP_URL }})"
+
+      - name: Clean Action
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          private_action: distinctlab/dx-actions-clean@master
+          run_id: ${{ github.run_id }}
+
+      - name: Webhook Action
+        if: always()
+        uses: distinctlab/dx-actions-loader@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          private_action: distinctlab/dx-actions-webhook@master
+          job_name: "Deploy"
+          job_status: ${{ job.status }}
+          run_id: ${{ github.run_id }}
+          pipeline_id: ${{ steps.env.outputs.REPO_NAME }}
+          job_payload: '{ "version": "${{ steps.env.outputs.VERSION }}", "app_url":"${{ steps.env.outputs.APP_URL }}", "artifact_name":"${{ steps.env.outputs.ARTIFACT_NAME }}", "artifact_url": "${{ steps.env.outputs.ACTIONS_RUN_URL }}/${{ github.run_id }}" }'
