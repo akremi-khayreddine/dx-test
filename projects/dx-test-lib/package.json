@@ -1,0 +1,1 @@
+{ "name": "@akremi-khayreddine/dx-test", "version": "0.0.0", "peerDependencies": { "@angular/common": "^10.1.4", "@angular/core": "^10.1.4" }, "dependencies": { "tslib": "^2.0.0" }, "repository": { "url": "https://github.com/akremi-khayreddine/dx-test.git" }, "publishConfig": { "registry": "https://npm.pkg.github.com/" } }
