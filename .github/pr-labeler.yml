@@ -1,7 +1,0 @@
-patch: ['bug/*', 'fix/*', patch/*]
-minor: ['feature/*', 'feat/*']
-major: major/*
-prepatch: prepatch/*
-preminor: preminor/*
-premajor: premajor/*
-prerelease: prerelease/*
