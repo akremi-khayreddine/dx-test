@@ -1,0 +1,34 @@
+name: Test1
+'on':
+  pull_request:
+    types:
+      - opened
+jobs:
+  Test1:
+    name: Test1
+    runs-on: ubuntu-latest
+    steps:
+      - id: checkout
+        name: Checkout
+        with:
+          repository: '${{ github.repository }}'
+          token: '${{ github.token }}'
+          ssh-strict: true
+          persist-credentials: true
+          clean: true
+          fetch-depth: 1
+        env: {}
+        uses: actions/checkout@v2
+      - id: hi-webhhok
+        name: Webhook
+        uses: distinctlab/dx-actions-loader@master
+        if: always()
+        env:
+          GITHUB_TOKEN: '${{ secrets.ACCESS_TOKEN }}'
+        with:
+          private_action: akremi-khayreddine/hi-pipelines-webhook-action@master
+          project_id: test-pipeline
+          github_token: '${{ secrets.GITHUB_TOKEN }}'
+          job_name: Test1
+          job_status: '${{ job.status }}'
+          run_id: '${{ github.run_id }}'
