@@ -3,7 +3,7 @@ name: Test
   push:
     types: []
 jobs:
-  Test:
+  Job1:
     name: Job1
     runs-on: ubuntu-latest
     steps:
@@ -25,7 +25,7 @@ jobs:
           github_token: '${{ secrets.GITHUB_TOKEN }}'
           job_name: Job1
           job_status: '${{ job.status }}'
-          next_job: Test
+          next_job: Job2
           run_id: '${{ github.run_id }}'
   Job2:
     name: Job2
