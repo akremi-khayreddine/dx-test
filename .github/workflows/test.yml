@@ -1,0 +1,57 @@
+name: Test
+'on':
+  push:
+    types: []
+jobs:
+  Job1:
+    name: Job1
+    runs-on: ubuntu-latest
+    steps:
+      - id: release
+        name: Get latest release
+        uses: pozetroninc/github-action-get-latest-release@master
+        with:
+          repository: akremi-khayreddine/dx-test
+        env: {}
+      - id: hi-webhhok
+        name: Webhook
+        uses: distinctlab/dx-actions-loader@master
+        if: always()
+        env:
+          GITHUB_TOKEN: '${{ secrets.ACCESS_TOKEN }}'
+        with:
+          private_action: akremi-khayreddine/hi-pipelines-webhook-action@master
+          project_id: test-pipeline
+          github_token: '${{ secrets.GITHUB_TOKEN }}'
+          job_name: Job1
+          job_status: '${{ job.status }}'
+          next_job: Job5
+          run_id: '${{ github.run_id }}'
+  Job5:
+    name: Job5
+    runs-on: ubuntu-latest
+    steps:
+      - id: checkout
+        name: Checkout 1
+        uses: actions/checkout@v2
+        with:
+          repository: '${{ github.repository }}'
+          token: '${{ github.token }}'
+          ssh-strict: true
+          persist-credentials: true
+          clean: true
+          fetch-depth: 1
+        env: {}
+      - id: hi-webhhok
+        name: Webhook
+        uses: distinctlab/dx-actions-loader@master
+        if: always()
+        env:
+          GITHUB_TOKEN: '${{ secrets.ACCESS_TOKEN }}'
+        with:
+          private_action: akremi-khayreddine/hi-pipelines-webhook-action@master
+          project_id: test-pipeline
+          github_token: '${{ secrets.GITHUB_TOKEN }}'
+          job_name: Job5
+          job_status: '${{ job.status }}'
+          run_id: '${{ github.run_id }}'
