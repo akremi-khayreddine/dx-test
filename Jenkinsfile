@@ -1,12 +1,10 @@
 pipeline {
-  agent any
-  stages {
-    stage('Install') {
-      steps { bat 'npm install' }
+    agent { docker { image 'node:6.3' } }
+    stages {
+        stage('build') {
+            steps {
+                sh 'npm --version'
+            }
+        }
     }
-
-    stage('Build') {
-      steps { bat 'npm run-script build' }
-    }
-  }
 }
