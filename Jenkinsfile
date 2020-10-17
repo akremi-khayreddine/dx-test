@@ -7,7 +7,7 @@ pipeline {
                 sh 'npm run build-app'
             }
         }
-      stage('build-lib) {
+      stage('build-lib') {
             steps {
                 sh 'npm run build-lib'
             }      
